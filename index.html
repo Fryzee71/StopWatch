@@ -117,6 +117,12 @@ h1 {
 .lcd.flash { animation: flash 260ms ease-out; }
 @keyframes flash { 0% { background: var(--gf-navy-control); } 100% { background: var(--gf-navy-deep); } }
 
+.meter { margin: 10px 2px 0; }
+.meter .well { position: relative; height: 8px; background: var(--gf-navy-deep); border: 1px solid var(--gf-navy-line); border-radius: 999px; overflow: hidden; }
+.meter .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--gf-on-navy-3); }
+.meter .fill.hot { background: var(--gf-copper); }
+.meter .thr { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--gf-on-navy); left: 50%; }
+body[data-mode="sound"] .words-only, body[data-mode="words"] .sound-only { display: none; }
 .heard {
   margin: 10px 2px 0; min-height: 1.5em;
   font-size: 14px; color: var(--gf-on-navy-2);
@@ -184,7 +190,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
 }
 </style>
 </head>
-<body>
+<body data-mode="words">
 <div class="app">
   <header>
     <div>
@@ -204,11 +210,13 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     <span id="readout" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">00:00.00</span>
   </div>
 
+  <div class="meter" id="meter" hidden><div class="well"><div class="fill" id="meterFill"></div><div class="thr" id="meterThr"></div></div></div>
+
   <p class="heard" id="heard">Say <b>start</b>, <b>stop</b>, <b>lap</b> or <b>reset</b>.</p>
 
   <div class="controls">
     <button class="btn" id="left" type="button">Reset</button>
-    <div class="cmds">Voice<span>start · stop</span><span>lap · reset</span></div>
+    <div class="cmds">Voice<span id="cmdsA">start · stop</span><span id="cmdsB">lap · reset</span></div>
     <button class="btn go" id="right" type="button">Start</button>
   </div>
 
@@ -217,13 +225,26 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
       <thead><tr><th>Lap</th><th>Split</th><th>Total</th></tr></thead>
       <tbody id="lapBody"></tbody>
     </table>
-    <p class="empty" id="lapEmpty">No laps yet. Say <b>lap</b> while running.</p>
+    <p class="empty" id="lapEmpty">No laps yet. Tap <b>Lap</b> while running.</p>
   </section>
 
   <details>
     <summary>Settings</summary>
     <div class="set">
-      <label>Recognition language
+      <label>Voice mode
+        <select id="mode">
+          <option value="sound">Any sound: start and stop toggle (fastest)</option>
+          <option value="words">Command words: start, stop, lap, reset</option>
+        </select>
+      </label>
+      <p>Any sound works everywhere, including the Home Screen app, and reacts in milliseconds. Speak a short sharp word or clap. Command words use Safari speech recognition, which iOS often blocks in Home Screen apps and which runs 0.3 to 1 s behind.</p>
+      <label class="sound-only">Sensitivity <output id="sensOut">Medium</output>
+        <input type="range" id="sens" min="1" max="5" step="1" value="3">
+      </label>
+      <label class="sound-only">Ignore sound after a trigger <output id="lockOut">1.0 s</output>
+        <input type="range" id="lock" min="0.4" max="3" step="0.1" value="1">
+      </label>
+      <label class="words-only">Recognition language
         <select id="lang">
           <option value="en-AU">English, Australia</option>
           <option value="en-GB">English, UK</option>
@@ -231,16 +252,16 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
           <option value="en-NZ">English, New Zealand</option>
         </select>
       </label>
-      <label>Trigger on
+      <label class="words-only">Trigger on
         <select id="trigger">
           <option value="interim">First recognition (fastest)</option>
           <option value="final">Confirmed phrase (slower, fewer false triggers)</option>
         </select>
       </label>
-      <label>Voice delay correction <output id="offOut">0 ms</output>
+      <label class="words-only">Voice delay correction <output id="offOut">0 ms</output>
         <input type="range" id="offset" min="0" max="800" step="25" value="0">
       </label>
-      <p>Speech recognition reports a word a few hundred milliseconds after you say it. This backdates voice starts and stops by the set amount. Buttons are never corrected.</p>
+      <p class="words-only">Speech recognition reports a word a few hundred milliseconds after you say it. This backdates voice starts and stops by the set amount. Buttons are never corrected.</p>
       <div class="row"><span>Beep on voice command</span><input type="checkbox" id="beep" checked></div>
       <div class="row"><span>Keep screen awake</span><input type="checkbox" id="wake" checked></div>
     </div>
@@ -442,26 +463,45 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
   });
 
   /* ---------- Settings (per device convenience) ---------- */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const standalone = window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
   const store = {
     get(k, d) { try { const v = localStorage.getItem('gfsw.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('gfsw.' + k, JSON.stringify(v)); } catch (e) { /* private mode */ } }
   };
+  const SENS = {
+    1: { rise: 26, min: -30, label: 'Low' },
+    2: { rise: 21, min: -36, label: 'Medium low' },
+    3: { rise: 16, min: -42, label: 'Medium' },
+    4: { rise: 12, min: -48, label: 'Medium high' },
+    5: { rise: 9, min: -54, label: 'High' }
+  };
   const S = {
+    mode: store.get('mode', (standalone || !SR) ? 'sound' : 'words'),
+    sens: store.get('sens', 3),
+    lock: store.get('lock', 1),
     lang: store.get('lang', 'en-AU'),
     trigger: store.get('trigger', 'interim'),
     offset: store.get('offset', 0),
     beep: store.get('beep', true),
     wake: store.get('wake', true)
   };
+  if (!SR) S.mode = 'sound';
+  $('mode').value = S.mode;
+  $('sens').value = S.sens; $('sensOut').textContent = SENS[S.sens].label;
+  $('lock').value = S.lock; $('lockOut').textContent = (+S.lock).toFixed(1) + ' s';
   $('lang').value = S.lang; $('trigger').value = S.trigger;
   $('offset').value = S.offset; $('offOut').textContent = S.offset + ' ms';
   $('beep').checked = S.beep; $('wake').checked = S.wake;
 
+  $('mode').addEventListener('change', e => { setMode(e.target.value); });
+  $('sens').addEventListener('input', e => { S.sens = +e.target.value; $('sensOut').textContent = SENS[S.sens].label; store.set('sens', S.sens); });
+  $('lock').addEventListener('input', e => { S.lock = +e.target.value; $('lockOut').textContent = S.lock.toFixed(1) + ' s'; store.set('lock', S.lock); });
   $('lang').addEventListener('change', e => { S.lang = e.target.value; store.set('lang', S.lang); if (rec) { rec.lang = S.lang; restartRec(); } });
   $('trigger').addEventListener('change', e => { S.trigger = e.target.value; store.set('trigger', S.trigger); });
   $('offset').addEventListener('input', e => { S.offset = +e.target.value; $('offOut').textContent = S.offset + ' ms'; store.set('offset', S.offset); });
   $('beep').addEventListener('change', e => { S.beep = e.target.checked; store.set('beep', S.beep); });
-  $('wake').addEventListener('change', e => { S.wake = e.target.checked; store.set('wake', S.wake); S.wake && listening ? wakeOn() : wakeOff(); });
+  $('wake').addEventListener('change', e => { S.wake = e.target.checked; store.set('wake', S.wake); S.wake && active ? wakeOn() : wakeOff(); });
 
   /* ---------- Feedback ---------- */
   let actx = null;
@@ -484,6 +524,14 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
   function flash() {
     lcd.classList.remove('flash'); void lcd.offsetWidth; lcd.classList.add('flash');
   }
+  function ack(cmd) {
+    flash();
+    if (cmd === 'start') beep(1320);
+    else if (cmd === 'stop') { beep(880); beep(880, 0.09, 0.13); }
+    else if (cmd === 'lap') beep(1100, 0.06);
+    else beep(660, 0.14);
+    if (!running) paint();
+  }
 
   let wakeLock = null;
   async function wakeOn() {
@@ -493,10 +541,116 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
   }
   function wakeOff() { if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } }
 
-  /* ---------- Voice ---------- */
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  /* ---------- Shared listening state ---------- */
   const mic = $('mic'), micText = $('micText'), heard = $('heard');
+  const meter = $('meter'), meterFill = $('meterFill'), meterThr = $('meterThr');
+  let active = false;
 
+  function setMic(state, text) { mic.dataset.state = state; micText.textContent = text; }
+  function say(html) { heard.innerHTML = html; }
+  function esc(s) { return s.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch])); }
+
+  function idleHint() {
+    say(S.mode === 'sound'
+      ? 'Tap the mic, then say <b>go</b> or clap to start. Same again to stop.'
+      : 'Say <b>start</b>, <b>stop</b>, <b>lap</b> or <b>reset</b>.');
+  }
+  function setMode(m) {
+    if (active) stopListening();
+    S.mode = m; store.set('mode', m);
+    $('mode').value = m;
+    document.body.dataset.mode = m;
+    $('cmdsA').textContent = m === 'sound' ? 'any sound' : 'start · stop';
+    $('cmdsB').textContent = m === 'sound' ? 'toggles' : 'lap · reset';
+    idleHint();
+  }
+
+  /* ---------- Sound trigger: mic level onset, no speech service ---------- */
+  let snd = null;
+
+  async function soundOn() {
+    unlockAudio();
+    if (!actx || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setMic('err', 'No mic'); say('This browser gives no microphone access.'); return;
+    }
+    active = true;
+    setMic('wait', 'Starting');
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+    } catch (e) {
+      active = false;
+      setMic('err', 'Mic blocked');
+      say('Microphone access was refused. Close the app fully, reopen it and tap Allow when asked. In Safari: Settings, Apps, Safari, Microphone, Allow.');
+      return;
+    }
+    if (!active) { stream.getTracks().forEach(t => t.stop()); return; }
+    try { if (actx.state !== 'running') await actx.resume(); } catch (e) { /* resumes on next tap */ }
+    const src = actx.createMediaStreamSource(stream);
+    const an = actx.createAnalyser();
+    an.fftSize = 512; an.smoothingTimeConstant = 0;
+    src.connect(an);
+    snd = { stream, src, an, buf: new Float32Array(an.fftSize), floor: null, armed: true, lockUntil: 0, timer: 0, warm: performance.now() + 400 };
+    snd.timer = setInterval(tick, 8);
+    meter.hidden = false;
+    setMic('on', 'Listening');
+    say('Listening. Say <b>go</b> or clap to start, same again to stop.');
+    wakeOn();
+  }
+
+  function soundOff() {
+    if (snd) {
+      clearInterval(snd.timer);
+      try { snd.src.disconnect(); } catch (e) { /* ignore */ }
+      snd.stream.getTracks().forEach(t => t.stop());
+      snd = null;
+    }
+    meter.hidden = true;
+  }
+
+  function tick() {
+    if (!snd) return;
+    const now = performance.now();
+    const { an, buf } = snd;
+    an.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const db = Math.max(-90, 10 * Math.log10(sum / buf.length + 1e-12));
+    const cfg = SENS[S.sens];
+    if (snd.floor === null) snd.floor = db;
+    const thr = Math.max(snd.floor + cfg.rise, cfg.min);
+
+    // Track the background level only while quiet, so speech never lifts the floor.
+    if (db < snd.floor + 6) snd.floor += (db - snd.floor) * (db < snd.floor ? 0.2 : 0.02);
+
+    meterFill.style.width = Math.max(0, Math.min(100, (db + 70) / 70 * 100)) + '%';
+    meterFill.classList.toggle('hot', db > thr);
+    meterThr.style.left = Math.max(0, Math.min(100, (thr + 70) / 70 * 100)) + '%';
+
+    if (now < snd.warm) return;
+    if (!snd.armed) {
+      if (now > snd.lockUntil && db < thr - 4) snd.armed = true;
+      return;
+    }
+    if (db <= thr) return;
+
+    // Backdate to the first sample in this window that crossed the threshold.
+    const amp = Math.pow(10, thr / 20);
+    let idx = buf.length - 1;
+    for (let i = 0; i < buf.length; i++) if (Math.abs(buf[i]) > amp) { idx = i; break; }
+    const at = now - (buf.length - idx) / actx.sampleRate * 1000;
+
+    snd.armed = false;
+    snd.lockUntil = now + S.lock * 1000;
+    const cmd = running ? 'stop' : 'start';
+    if (cmd === 'stop') stop(Math.max(at, t0)); else start(at);
+    ack(cmd);
+    say(`Sound <b>${cmd}</b> at ${(db).toFixed(0)} dB`);
+  }
+
+  /* ---------- Command words: Safari speech recognition ---------- */
   const WORDS = {
     start: ['start', 'starts', 'started', 'go', 'begin', 'resume'],
     stop: ['stop', 'stops', 'stopped', 'halt', 'pause', 'freeze'],
@@ -514,12 +668,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     return out;
   }
 
-  let rec = null, listening = false, fired = new Map(), lastCmd = {}, restarts = [];
-
-  function setMic(state, text) { mic.dataset.state = state; micText.textContent = text; }
-
-  function say(html) { heard.innerHTML = html; }
-  function esc(s) { return s.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch])); }
+  let rec = null, fired = new Map(), lastCmd = {}, restarts = [], watchdog = 0;
 
   function act(cmd, now, text) {
     if (now - (lastCmd[cmd] || -1e9) < 900) return;   // swallow re-sent duplicates
@@ -531,12 +680,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     else if (cmd === 'reset') ok = reset();
     lastCmd[cmd] = now;
     if (ok) {
-      flash();
-      if (cmd === 'start') beep(1320);
-      else if (cmd === 'stop') { beep(880); beep(880, 0.09, 0.13); }
-      else if (cmd === 'lap') beep(1100, 0.06);
-      else beep(660, 0.14);
-      if (!running) paint();
+      ack(cmd);
       say(`Heard <b>${cmd}</b> · “${esc(text.trim())}”`);
     } else {
       const why = cmd === 'reset' ? 'stop it first' : (running ? 'already running' : 'not running');
@@ -558,21 +702,29 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     }
   }
 
+  function wordsFailed(msg) {
+    clearTimeout(watchdog);
+    active = false;
+    try { rec && rec.abort(); } catch (e) { /* ignore */ }
+    rec = null;
+    wakeOff();
+    setMode('sound');
+    setMic('off', 'Tap to listen');
+    say(msg + ' Switched to <b>any sound</b> mode. Tap the mic, then say <b>go</b> or clap.');
+  }
+
   function makeRec() {
     rec = new SR();
     rec.lang = S.lang;
     rec.continuous = true;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
-    rec.onstart = () => { setMic('on', 'Listening'); };
+    rec.onstart = () => { clearTimeout(watchdog); setMic('on', 'Listening'); };
     rec.onresult = handle;
     rec.onerror = e => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        listening = false;
-        setMic('err', 'Mic blocked');
-        say('Microphone or speech recognition is blocked. On iPhone: Settings, Safari, Microphone, Allow. Also turn on Siri or Dictation (Settings, General, Keyboard, Enable Dictation). If you opened this from the Home Screen icon, try it in a Safari tab.');
-        wakeOff();
+        wordsFailed('Speech recognition is blocked here.');
       } else if (e.error === 'network') {
         say('Speech service unreachable. Check your connection.');
       } else if (e.error === 'audio-capture') {
@@ -581,54 +733,61 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     };
     rec.onend = () => {
       fired = new Map();
-      if (!listening) { setMic('off', 'Tap to listen'); return; }
+      if (!active || S.mode !== 'words') return;
       const now = Date.now();
       restarts = restarts.filter(t => now - t < 10000);
       restarts.push(now);
-      if (restarts.length > 8) {
-        listening = false; setMic('err', 'Voice stopped');
-        say('Recognition keeps dropping out. Tap the mic button to try again.');
-        wakeOff();
-        return;
-      }
+      if (restarts.length > 8) { wordsFailed('Speech recognition keeps dropping out.'); return; }
       setMic('wait', 'Reconnecting');
-      setTimeout(() => { if (listening) { try { rec.start(); } catch (err) { /* already started */ } } }, 120);
+      setTimeout(() => { if (active && rec) { try { rec.start(); } catch (err) { /* already started */ } } }, 120);
     };
   }
 
-  function restartRec() { if (listening) { try { rec.abort(); } catch (e) { /* ignore */ } } }
+  function restartRec() { if (active && rec) { try { rec.abort(); } catch (e) { /* ignore */ } } }
 
-  function listen() {
-    if (!SR) return;
+  function wordsOn() {
     unlockAudio();
     if (!rec) makeRec();
-    listening = true; restarts = [];
+    active = true; restarts = [];
     setMic('wait', 'Starting');
     try { rec.start(); } catch (e) { /* already running */ }
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      if (active && mic.dataset.state === 'wait') {
+        wordsFailed('Speech recognition did not start. iOS often blocks it in Home Screen apps.');
+      }
+    }, 5000);
     wakeOn();
   }
-  function unlisten() {
-    listening = false;
+
+  /* ---------- Mic button ---------- */
+  function startListening() { S.mode === 'sound' ? soundOn() : wordsOn(); }
+  function stopListening() {
+    active = false;
+    clearTimeout(watchdog);
     try { rec && rec.stop(); } catch (e) { /* ignore */ }
+    soundOff();
     setMic('off', 'Tap to listen');
     wakeOff();
+    idleHint();
   }
+  mic.addEventListener('click', () => active ? stopListening() : startListening());
 
-  if (!SR) {
-    setMic('err', 'No voice');
-    mic.disabled = true;
-    say('This browser has no speech recognition. On iPhone use Safari, iOS 14.5 or later. The buttons still work.');
-  } else {
-    mic.addEventListener('click', () => listening ? unlisten() : listen());
-  }
+  if (!SR) $('mode').querySelector('option[value="words"]').disabled = true;
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      paint();
-      if (listening) { try { rec.start(); } catch (e) { /* still running */ } wakeOn(); }
-    }
+    if (document.visibilityState !== 'visible') return;
+    paint();
+    if (!active) return;
+    if (S.mode === 'sound') {
+      if (!snd || snd.stream.getAudioTracks().every(t => t.readyState === 'ended')) {
+        stopListening(); say('Listening paused while the app was in the background. Tap the mic to resume.');
+      } else if (actx && actx.state !== 'running') { actx.resume().catch(() => {}); }
+    } else if (rec) { try { rec.start(); } catch (e) { /* still running */ } }
+    if (active) wakeOn();
   });
 
+  setMode(S.mode);
   paint(); syncUi(); renderLaps();
 })();
 </script>
