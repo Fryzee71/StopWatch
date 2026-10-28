@@ -121,6 +121,14 @@ h1 {
 .meter .well { position: relative; height: 8px; background: var(--gf-navy-deep); border: 1px solid var(--gf-navy-line); border-radius: 999px; overflow: hidden; }
 .meter .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--gf-on-navy-3); }
 .meter .fill.hot { background: var(--gf-copper); }
+.meter .mlab { display: flex; justify-content: space-between; margin-top: 4px; font: 12px var(--gf-mono); color: var(--gf-on-navy-3); }
+.meter .mlab b { font-weight: 400; color: var(--gf-on-navy-2); }
+.calbtn {
+  min-height: 44px; width: 100%; padding: 8px 14px; border-radius: var(--gf-radius);
+  border: 1px solid var(--gf-navy-line-ui); background: var(--gf-navy-control); color: var(--gf-on-navy);
+  font: 600 14px var(--gf-sans); cursor: pointer;
+}
+.cal p { margin-top: 6px; }
 .meter .thr { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--gf-on-navy); left: 50%; }
 body[data-mode="sound"] .words-only, body[data-mode="words"] .sound-only { display: none; }
 .heard {
@@ -210,7 +218,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     <span id="readout" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">00:00.00</span>
   </div>
 
-  <div class="meter" id="meter" hidden><div class="well"><div class="fill" id="meterFill"></div><div class="thr" id="meterThr"></div></div></div>
+  <div class="meter" id="meter" hidden><div class="well"><div class="fill" id="meterFill"></div><div class="thr" id="meterThr"></div></div><div class="mlab"><span>Level <b id="dbNow">-</b> dB</span><span>Trigger <b id="dbThr">-</b> dB</span></div></div>
 
   <p class="heard" id="heard">Say <b>start</b>, <b>stop</b>, <b>lap</b> or <b>reset</b>.</p>
 
@@ -244,6 +252,10 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
       <label class="sound-only">Ignore sound after a trigger <output id="lockOut">1.0 s</output>
         <input type="range" id="lock" min="0.4" max="3" step="0.1" value="1">
       </label>
+      <div class="sound-only cal">
+        <button type="button" class="calbtn" id="calBtn">Calibrate to my voice</button>
+        <p id="calNote">Not calibrated. Using the sensitivity setting alone.</p>
+      </div>
       <label class="words-only">Recognition language
         <select id="lang">
           <option value="en-AU">English, Australia</option>
@@ -471,16 +483,18 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
   };
   const SENS = {
     // rise: dB above background. min: absolute floor, dBFS. hold: ms the sound must last.
-    1: { rise: 30, min: -14, hold: 150, label: 'Low' },
-    2: { rise: 26, min: -19, hold: 120, label: 'Medium low' },
-    3: { rise: 22, min: -24, hold: 100, label: 'Medium' },
-    4: { rise: 18, min: -30, hold: 80, label: 'Medium high' },
-    5: { rise: 14, min: -36, hold: 60, label: 'High' }
+    // With a calibration, step shifts the calibrated level instead of rise and min.
+    1: { rise: 22, min: -32, hold: 110, step: 6, label: 'Low' },
+    2: { rise: 19, min: -37, hold: 95, step: 3, label: 'Medium low' },
+    3: { rise: 16, min: -42, hold: 80, step: 0, label: 'Medium' },
+    4: { rise: 13, min: -48, hold: 65, step: -3, label: 'Medium high' },
+    5: { rise: 10, min: -54, hold: 50, step: -6, label: 'High' }
   };
   const S = {
     mode: store.get('mode', (standalone || !SR) ? 'sound' : 'words'),
     sens: store.get('sens', 3),
     lock: store.get('lock', 1),
+    cal: store.get('cal', null),
     lang: store.get('lang', 'en-AU'),
     trigger: store.get('trigger', 'interim'),
     offset: store.get('offset', 0),
@@ -497,6 +511,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
 
   $('mode').addEventListener('change', e => { setMode(e.target.value); });
   $('sens').addEventListener('input', e => { S.sens = +e.target.value; $('sensOut').textContent = SENS[S.sens].label; store.set('sens', S.sens); });
+  $('calBtn').addEventListener('click', () => calibrate());
   $('lock').addEventListener('input', e => { S.lock = +e.target.value; $('lockOut').textContent = S.lock.toFixed(1) + ' s'; store.set('lock', S.lock); });
   $('lang').addEventListener('change', e => { S.lang = e.target.value; store.set('lang', S.lang); if (rec) { rec.lang = S.lang; restartRec(); } });
   $('trigger').addEventListener('change', e => { S.trigger = e.target.value; store.set('trigger', S.trigger); });
@@ -544,7 +559,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
 
   /* ---------- Shared listening state ---------- */
   const mic = $('mic'), micText = $('micText'), heard = $('heard');
-  const meter = $('meter'), meterFill = $('meterFill'), meterThr = $('meterThr');
+  const meter = $('meter'), meterFill = $('meterFill'), meterThr = $('meterThr'), dbNow = $('dbNow'), dbThr = $('dbThr');
   let active = false;
 
   function setMic(state, text) { mic.dataset.state = state; micText.textContent = text; }
@@ -597,7 +612,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3500;
     src.connect(hp).connect(lp).connect(an);
     snd = { stream, src, an, buf: new Float32Array(an.fftSize), floor: null, armed: true, lockUntil: 0, timer: 0,
-            warm: performance.now() + 400, onset: 0, lastAbove: 0, peak: -90 };
+            warm: performance.now() + 400, onset: 0, lastAbove: 0, peak: -90, n: 0, shown: -90, cal: null };
     snd.timer = setInterval(tick, 8);
     meter.hidden = false;
     setMic('on', 'Listening');
@@ -615,6 +630,33 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     meter.hidden = true;
   }
 
+  function calNote() {
+    $('calNote').textContent = S.cal === null
+      ? 'Not calibrated. Using the sensitivity setting alone.'
+      : `Calibrated: trigger at ${Math.round(S.cal)} dB. Sensitivity shifts it up or down. Calibrate again if you move somewhere louder or quieter.`;
+  }
+
+  async function calibrate() {
+    if (!snd) { await soundOn(); if (!snd) return; }
+    snd.cal = { until: performance.now() + 4000, peak: -90, left: 0 };
+    snd.onset = 0;
+  }
+
+  function finishCal() {
+    const peak = snd.cal.peak, floor = snd.floor;
+    snd.cal = null;
+    if (peak < floor + 12) {
+      say(`Did not hear you clearly (loudest ${Math.round(peak)} dB, background ${Math.round(floor)} dB). Hold the phone closer and calibrate again.`);
+      return;
+    }
+    // Trigger 9 dB under your loudest word, and never closer than 8 dB to the background.
+    S.cal = Math.max(peak - 9, floor + 8);
+    store.set('cal', S.cal);
+    calNote();
+    snd.armed = false; snd.lockUntil = performance.now() + 600;
+    say(`Calibrated. Trigger set at ${Math.round(S.cal)} dB. Say <b>go</b> to start.`);
+  }
+
   function tick() {
     if (!snd) return;
     const now = performance.now();
@@ -625,7 +667,9 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     const db = Math.max(-90, 10 * Math.log10(sum / buf.length + 1e-12));
     const cfg = SENS[S.sens];
     if (snd.floor === null) snd.floor = db;
-    const thr = Math.max(snd.floor + cfg.rise, cfg.min);
+    const thr = S.cal !== null
+      ? Math.max(S.cal + cfg.step, snd.floor + 6)
+      : Math.max(snd.floor + cfg.rise, cfg.min);
 
     // Track the background level only while quiet, so speech never lifts the floor.
     if (db < snd.floor + 6) snd.floor += (db - snd.floor) * (db < snd.floor ? 0.2 : 0.02);
@@ -633,6 +677,16 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     meterFill.style.width = Math.max(0, Math.min(100, (db + 70) / 70 * 100)) + '%';
     meterFill.classList.toggle('hot', db > thr);
     meterThr.style.left = Math.max(0, Math.min(100, (thr + 70) / 70 * 100)) + '%';
+    if (++snd.n % 12 === 0) { dbNow.textContent = Math.round(snd.shown); dbThr.textContent = Math.round(thr); snd.shown = -90; }
+    snd.shown = Math.max(snd.shown, db);
+
+    if (snd.cal) {
+      snd.cal.peak = Math.max(snd.cal.peak, db);
+      const left = Math.ceil((snd.cal.until - now) / 1000);
+      if (left !== snd.cal.left) { snd.cal.left = left; say(`Calibrating: say <b>go</b> two or three times at your normal level. ${left}`); }
+      if (now >= snd.cal.until) finishCal();
+      return;
+    }
 
     if (now < snd.warm) return;
     if (!snd.armed) {
@@ -805,6 +859,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
   });
 
   setMode(S.mode);
+  calNote();
   paint(); syncUi(); renderLaps();
 })();
 </script>

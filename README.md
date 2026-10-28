@@ -19,6 +19,7 @@ Siri or Dictation must be on (Settings, General, Keyboard, Enable Dictation).
 
 ## Notes
 
+- Calibrate to my voice (Settings): say "go" two or three times and the trigger is set 9 dB under your loudest word. Do this once where you will use it.
 - Any sound mode ignores further sound for 1 s after a trigger (adjustable) so the beep and echo do not retrigger it. Sensitivity is adjustable; the bar under the display shows the live level and the trigger point.
 - Command words land about 0.3 to 1 s after you speak. The voice delay correction backdates them by a fixed amount.
 - Recognition stops when the screen locks. Keep the screen awake setting on.
