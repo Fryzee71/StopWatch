@@ -4,7 +4,7 @@ Voice controlled stopwatch for iPhone, in grahamfry.com.au colours.
 
 Two voice modes, chosen in Settings:
 
-- Any sound (default in the Home Screen app): say a short sharp word such as "go", or clap. One sound starts, the next stops. Reacts in milliseconds and needs no speech service.
+- Any sound (default in the Home Screen app): say a clear word such as "go". Clicks, knocks and taps shorter than about 0.1 s are ignored. One sound starts, the next stops. Reacts in milliseconds and needs no speech service.
 - Command words: say "start", "stop", "lap" or "reset". Uses Safari speech recognition, runs 0.3 to 1 s behind, and iOS often blocks it in Home Screen apps. If it does not start within 5 s the app switches to Any sound.
 
 Buttons work in both modes.

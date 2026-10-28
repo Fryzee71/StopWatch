@@ -237,7 +237,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
           <option value="words">Command words: start, stop, lap, reset</option>
         </select>
       </label>
-      <p>Any sound works everywhere, including the Home Screen app, and reacts in milliseconds. Speak a short sharp word or clap. Command words use Safari speech recognition, which iOS often blocks in Home Screen apps and which runs 0.3 to 1 s behind.</p>
+      <p>Any sound works everywhere, including the Home Screen app, and reacts in milliseconds. Say a clear word such as go. Short clicks, knocks and taps are ignored. Command words use Safari speech recognition, which iOS often blocks in Home Screen apps and which runs 0.3 to 1 s behind.</p>
       <label class="sound-only">Sensitivity <output id="sensOut">Medium</output>
         <input type="range" id="sens" min="1" max="5" step="1" value="3">
       </label>
@@ -470,11 +470,12 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     set(k, v) { try { localStorage.setItem('gfsw.' + k, JSON.stringify(v)); } catch (e) { /* private mode */ } }
   };
   const SENS = {
-    1: { rise: 26, min: -30, label: 'Low' },
-    2: { rise: 21, min: -36, label: 'Medium low' },
-    3: { rise: 16, min: -42, label: 'Medium' },
-    4: { rise: 12, min: -48, label: 'Medium high' },
-    5: { rise: 9, min: -54, label: 'High' }
+    // rise: dB above background. min: absolute floor, dBFS. hold: ms the sound must last.
+    1: { rise: 30, min: -14, hold: 150, label: 'Low' },
+    2: { rise: 26, min: -19, hold: 120, label: 'Medium low' },
+    3: { rise: 22, min: -24, hold: 100, label: 'Medium' },
+    4: { rise: 18, min: -30, hold: 80, label: 'Medium high' },
+    5: { rise: 14, min: -36, hold: 60, label: 'High' }
   };
   const S = {
     mode: store.get('mode', (standalone || !SR) ? 'sound' : 'words'),
@@ -552,7 +553,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
 
   function idleHint() {
     say(S.mode === 'sound'
-      ? 'Tap the mic, then say <b>go</b> or clap to start. Same again to stop.'
+      ? 'Tap the mic, then say <b>go</b> clearly to start. Same again to stop.'
       : 'Say <b>start</b>, <b>stop</b>, <b>lap</b> or <b>reset</b>.');
   }
   function setMode(m) {
@@ -591,12 +592,16 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     const src = actx.createMediaStreamSource(stream);
     const an = actx.createAnalyser();
     an.fftSize = 512; an.smoothingTimeConstant = 0;
-    src.connect(an);
-    snd = { stream, src, an, buf: new Float32Array(an.fftSize), floor: null, armed: true, lockUntil: 0, timer: 0, warm: performance.now() + 400 };
+    // Voice band only: drops rumble, bumps on the bench and hiss.
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 250;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3500;
+    src.connect(hp).connect(lp).connect(an);
+    snd = { stream, src, an, buf: new Float32Array(an.fftSize), floor: null, armed: true, lockUntil: 0, timer: 0,
+            warm: performance.now() + 400, onset: 0, lastAbove: 0, peak: -90 };
     snd.timer = setInterval(tick, 8);
     meter.hidden = false;
     setMic('on', 'Listening');
-    say('Listening. Say <b>go</b> or clap to start, same again to stop.');
+    say('Listening. Say <b>go</b> clearly to start, same again to stop.');
     wakeOn();
   }
 
@@ -634,20 +639,32 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
       if (now > snd.lockUntil && db < thr - 4) snd.armed = true;
       return;
     }
-    if (db <= thr) return;
+    if (db <= thr) {
+      // A click or knock dies away before the hold time; forget it. Allow 30 ms dips inside a word.
+      if (snd.onset && now - snd.lastAbove > 30) snd.onset = 0;
+      return;
+    }
+    snd.lastAbove = now;
+    if (!snd.onset) {
+      // Remember where the sound began: the first sample in this window over the threshold.
+      const amp = Math.pow(10, thr / 20);
+      let idx = buf.length - 1;
+      for (let i = 0; i < buf.length; i++) if (Math.abs(buf[i]) > amp) { idx = i; break; }
+      snd.onset = now - (buf.length - idx) / actx.sampleRate * 1000;
+      snd.peak = db;
+    }
+    snd.peak = Math.max(snd.peak, db);
+    if (now - snd.onset < cfg.hold) return;
 
-    // Backdate to the first sample in this window that crossed the threshold.
-    const amp = Math.pow(10, thr / 20);
-    let idx = buf.length - 1;
-    for (let i = 0; i < buf.length; i++) if (Math.abs(buf[i]) > amp) { idx = i; break; }
-    const at = now - (buf.length - idx) / actx.sampleRate * 1000;
-
+    // Sustained long enough to be a spoken word. Time it from the onset, not from now.
+    const at = snd.onset;
+    snd.onset = 0;
     snd.armed = false;
     snd.lockUntil = now + S.lock * 1000;
     const cmd = running ? 'stop' : 'start';
     if (cmd === 'stop') stop(Math.max(at, t0)); else start(at);
     ack(cmd);
-    say(`Sound <b>${cmd}</b> at ${(db).toFixed(0)} dB`);
+    say(`Sound <b>${cmd}</b> at ${snd.peak.toFixed(0)} dB`);
   }
 
   /* ---------- Command words: Safari speech recognition ---------- */
@@ -710,7 +727,7 @@ footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
     wakeOff();
     setMode('sound');
     setMic('off', 'Tap to listen');
-    say(msg + ' Switched to <b>any sound</b> mode. Tap the mic, then say <b>go</b> or clap.');
+    say(msg + ' Switched to <b>any sound</b> mode. Tap the mic, then say <b>go</b> clearly.');
   }
 
   function makeRec() {
