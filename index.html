@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voice Stopwatch</title>
+<meta name="description" content="Stopwatch you start and stop by voice. Graham Fry.">
+<meta name="theme-color" content="#17293A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Stopwatch">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-512.png">
+<style>
+/* ============================================================================
+   Graham Fry brand tokens
+   Sampled from live computed styles, grahamfry.com.au, 18 August 2026.
+   ============================================================================ */
+:root {
+  --gf-navy:            #17293A;
+  --gf-navy-deep:       #12202E;
+  --gf-navy-surface:    #1F3548;
+  --gf-navy-control:    #24405A;
+  --gf-navy-line:       #2C4358;
+  --gf-navy-line-ui:    #4C7498;
+  --gf-copper:          #B87333;
+  --gf-copper-btn:      #A7682E;
+  --gf-copper-link:     #9E5E2C;
+  --gf-copper-on-navy:  #D4924A;
+  --gf-copper-bright:   #E6A56B;
+  --gf-white:           #FFFFFF;
+  --gf-on-navy:         #EEF1F4;
+  --gf-on-navy-2:       #CDD6DE;
+  --gf-on-navy-3:       #9FB0BE;
+  --gf-ok-navy:         #8FC79E;
+  --gf-warn-navy:       #E0B872;
+  --gf-stop-navy:       #F0968A;
+  --gf-stop:            #9C2F18;
+  --gf-display: Georgia, "Times New Roman", serif;
+  --gf-sans:    Inter, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --gf-mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --gf-radius:    6px;
+  --gf-radius-panel: 4px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--gf-navy);
+  color: var(--gf-on-navy);
+  font-family: var(--gf-sans);
+  font-size: 17px;
+  line-height: 1.5;
+  color-scheme: dark;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+.app {
+  max-width: 520px;
+  margin: 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 16px);
+}
+
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.eyebrow {
+  font-size: 12.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--gf-on-navy-3); margin: 0;
+}
+h1 {
+  font-family: var(--gf-display); font-weight: 400; font-size: 1.6rem; line-height: 1.2;
+  margin: 2px 0 0; color: var(--gf-on-navy);
+}
+
+/* Mic pill */
+.mic {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 8px 14px;
+  border-radius: 999px; border: 1px solid var(--gf-navy-line-ui);
+  background: var(--gf-navy-control); color: var(--gf-on-navy);
+  font: 600 13px var(--gf-sans); cursor: pointer; white-space: nowrap;
+}
+.mic svg { width: 18px; height: 18px; flex: none; }
+.mic .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--gf-on-navy-3); flex: none; }
+.mic[data-state="on"] .dot { background: var(--gf-ok-navy); animation: pulse 1.4s ease-in-out infinite; }
+.mic[data-state="err"] .dot { background: var(--gf-stop-navy); }
+.mic[data-state="wait"] .dot { background: var(--gf-warn-navy); }
+@keyframes pulse { 50% { opacity: .35; } }
+
+/* LCD readout */
+.lcd {
+  position: relative;
+  margin-top: 18px;
+  background: var(--gf-navy-deep);
+  border: 1px solid var(--gf-navy-line);
+  border-top: 2px solid var(--gf-copper);
+  border-radius: var(--gf-radius-panel);
+  padding: 30px 14px 18px;
+}
+.lcd-top {
+  position: absolute; top: 8px; left: 14px; right: 14px;
+  display: flex; justify-content: space-between;
+  font: 600 11px var(--gf-mono); letter-spacing: 1px; text-transform: uppercase;
+  color: var(--gf-on-navy-3);
+}
+.lcd-top .run { color: var(--gf-on-navy-3); }
+.lcd-top .run.on { color: var(--gf-copper-bright); }
+#seg { display: block; width: 100%; height: auto; }
+#seg .s { fill: var(--gf-navy-line); transition: fill 40ms linear; }
+#seg .s.on { fill: var(--gf-copper-bright); }
+.lcd.flash { animation: flash 260ms ease-out; }
+@keyframes flash { 0% { background: var(--gf-navy-control); } 100% { background: var(--gf-navy-deep); } }
+
+.heard {
+  margin: 10px 2px 0; min-height: 1.5em;
+  font-size: 14px; color: var(--gf-on-navy-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.heard b { font-weight: 600; color: var(--gf-copper-on-navy); }
+
+/* Buttons */
+.controls { display: flex; justify-content: space-between; align-items: center; margin: 18px 4px 0; }
+.btn {
+  width: 88px; height: 88px; border-radius: 50%;
+  border: 2px solid var(--gf-navy-line-ui);
+  background: var(--gf-navy-control); color: var(--gf-on-navy);
+  font: 600 16px var(--gf-sans); cursor: pointer;
+  box-shadow: 0 0 0 4px var(--gf-navy), 0 0 0 5px var(--gf-navy-line);
+}
+.btn:active { filter: brightness(1.15); }
+.btn:disabled { color: var(--gf-on-navy-3); cursor: default; }
+.btn.go { background: var(--gf-copper-btn); border-color: var(--gf-copper-btn); color: var(--gf-white); }
+.btn.halt { background: var(--gf-stop); border-color: var(--gf-stop); color: var(--gf-white); }
+.cmds { text-align: center; font-size: 13px; color: var(--gf-on-navy-3); line-height: 1.4; }
+.cmds span { display: block; font-family: var(--gf-mono); color: var(--gf-on-navy-2); }
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--gf-copper-bright); outline-offset: 3px;
+}
+
+/* Laps */
+.laps { margin-top: 22px; flex: 1; }
+.laps table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.laps th {
+  text-align: left; font-size: 12.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--gf-on-navy-3); padding: 0 0 6px; border-bottom: 1px solid var(--gf-navy-line);
+}
+.laps td { padding: 9px 0; border-bottom: 1px solid var(--gf-navy-line); font-family: var(--gf-mono); font-variant-numeric: tabular-nums; }
+.laps th:not(:first-child), .laps td:not(:first-child) { text-align: right; }
+.laps td small { font-family: var(--gf-sans); font-size: 12px; color: var(--gf-on-navy-3); margin-left: 6px; }
+.laps .empty { color: var(--gf-on-navy-3); font-size: 14px; margin: 8px 0 0; }
+
+/* Settings */
+details {
+  margin-top: 22px; background: var(--gf-navy-surface);
+  border: 1px solid var(--gf-navy-line); border-radius: var(--gf-radius-panel);
+}
+summary { padding: 12px 14px; cursor: pointer; font-weight: 600; font-size: 15px; color: var(--gf-on-navy-2); }
+.set { padding: 0 14px 14px; display: grid; gap: 14px; font-size: 15px; }
+.set label { display: grid; gap: 4px; color: var(--gf-on-navy-2); }
+.set .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set select, .set input[type=range] { width: 100%; }
+.set select {
+  min-height: 40px; padding: 6px 10px; font: 15px var(--gf-sans);
+  background: var(--gf-navy-control); color: var(--gf-on-navy);
+  border: 1px solid var(--gf-navy-line-ui); border-radius: var(--gf-radius);
+}
+.set input[type=range] { accent-color: var(--gf-copper); }
+.set input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--gf-copper); }
+.set output { font-family: var(--gf-mono); color: var(--gf-on-navy); }
+.set p { margin: 0; font-size: 13px; color: var(--gf-on-navy-3); }
+
+footer { margin-top: 18px; text-align: center; font-size: 12.5px; color: var(--gf-on-navy-3); }
+footer a { color: var(--gf-copper-on-navy); text-decoration: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mic[data-state="on"] .dot, .lcd.flash { animation: none; }
+  #seg .s { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <p class="eyebrow">Graham Fry</p>
+      <h1>Voice stopwatch</h1>
+    </div>
+    <button class="mic" id="mic" type="button" data-state="off" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      <span id="micText">Tap to listen</span>
+    </button>
+  </header>
+
+  <div class="lcd" id="lcd" role="timer" aria-live="off">
+    <div class="lcd-top"><span id="hrs">min : sec . 1/100</span><span class="run" id="run">Stopped</span></div>
+    <svg id="seg" aria-hidden="true"></svg>
+    <span id="readout" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">00:00.00</span>
+  </div>
+
+  <p class="heard" id="heard">Say <b>start</b>, <b>stop</b>, <b>lap</b> or <b>reset</b>.</p>
+
+  <div class="controls">
+    <button class="btn" id="left" type="button">Reset</button>
+    <div class="cmds">Voice<span>start · stop</span><span>lap · reset</span></div>
+    <button class="btn go" id="right" type="button">Start</button>
+  </div>
+
+  <section class="laps" aria-label="Laps">
+    <table hidden id="lapTable">
+      <thead><tr><th>Lap</th><th>Split</th><th>Total</th></tr></thead>
+      <tbody id="lapBody"></tbody>
+    </table>
+    <p class="empty" id="lapEmpty">No laps yet. Say <b>lap</b> while running.</p>
+  </section>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="set">
+      <label>Recognition language
+        <select id="lang">
+          <option value="en-AU">English, Australia</option>
+          <option value="en-GB">English, UK</option>
+          <option value="en-US">English, US</option>
+          <option value="en-NZ">English, New Zealand</option>
+        </select>
+      </label>
+      <label>Trigger on
+        <select id="trigger">
+          <option value="interim">First recognition (fastest)</option>
+          <option value="final">Confirmed phrase (slower, fewer false triggers)</option>
+        </select>
+      </label>
+      <label>Voice delay correction <output id="offOut">0 ms</output>
+        <input type="range" id="offset" min="0" max="800" step="25" value="0">
+      </label>
+      <p>Speech recognition reports a word a few hundred milliseconds after you say it. This backdates voice starts and stops by the set amount. Buttons are never corrected.</p>
+      <div class="row"><span>Beep on voice command</span><input type="checkbox" id="beep" checked></div>
+      <div class="row"><span>Keep screen awake</span><input type="checkbox" id="wake" checked></div>
+    </div>
+  </details>
+
+  <footer><a href="https://grahamfry.com.au">grahamfry.com.au</a></footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ---------- Seven segment display ---------- */
+  const NS = 'http://www.w3.org/2000/svg';
+  const W = 56, H = 100, T = 11, G = 1.6, GAP = 9, SEP = 18;
+  const MAP = {
+    0: 'abcdef', 1: 'bc', 2: 'abged', 3: 'abgcd', 4: 'fgbc',
+    5: 'afgcd', 6: 'afgedc', 7: 'abc', 8: 'abcdefg', 9: 'abcdfg'
+  };
+  const svg = document.getElementById('seg');
+  const digits = [];
+
+  function hSeg(x1, x2, yc) {
+    const h = T / 2;
+    x1 += G; x2 -= G;
+    return `${x1},${yc} ${x1 + h},${yc - h} ${x2 - h},${yc - h} ${x2},${yc} ${x2 - h},${yc + h} ${x1 + h},${yc + h}`;
+  }
+  function vSeg(xc, y1, y2) {
+    const h = T / 2;
+    y1 += G; y2 -= G;
+    return `${xc},${y1} ${xc + h},${y1 + h} ${xc + h},${y2 - h} ${xc},${y2} ${xc - h},${y2 - h} ${xc - h},${y1 + h}`;
+  }
+  const h2 = T / 2;
+  const SEGS = {
+    a: hSeg(h2, W - h2, h2),
+    g: hSeg(h2, W - h2, H / 2),
+    d: hSeg(h2, W - h2, H - h2),
+    f: vSeg(h2, h2, H / 2),
+    b: vSeg(W - h2, h2, H / 2),
+    e: vSeg(h2, H / 2, H - h2),
+    c: vSeg(W - h2, H / 2, H - h2)
+  };
+
+  function el(name, attrs, parent) {
+    const n = document.createElementNS(NS, name);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    parent.appendChild(n);
+    return n;
+  }
+
+  (function build() {
+    const layout = ['d', 'd', ':', 'd', 'd', '.', 'd', 'd'];
+    let x = 8;
+    const g = el('g', { transform: 'skewX(-6)' }, svg);
+    for (const item of layout) {
+      if (item === 'd') {
+        const dg = el('g', { transform: `translate(${x},0)` }, g);
+        const segs = {};
+        for (const k in SEGS) segs[k] = el('polygon', { points: SEGS[k], class: 's' }, dg);
+        digits.push({ segs, val: -1 });
+        x += W + GAP;
+      } else if (item === ':') {
+        el('rect', { x: x + 2, y: 28, width: 11, height: 11, class: 's on' }, g);
+        el('rect', { x: x + 2, y: 64, width: 11, height: 11, class: 's on' }, g);
+        x += SEP + GAP;
+      } else {
+        el('rect', { x: x + 2, y: H - 11, width: 11, height: 11, class: 's on' }, g);
+        x += SEP + GAP;
+      }
+    }
+    svg.setAttribute('viewBox', `0 -2 ${x} ${H + 4}`);
+  })();
+
+  function setDigit(i, v) {
+    const d = digits[i];
+    if (d.val === v) return;
+    d.val = v;
+    const on = MAP[v];
+    for (const k in d.segs) d.segs[k].classList.toggle('on', on.includes(k));
+  }
+
+  /* ---------- Stopwatch state ---------- */
+  let running = false;
+  let base = 0;        // accumulated ms while stopped
+  let t0 = 0;          // performance.now() at last start
+  let laps = [];       // {split, total}
+  let lastLapTotal = 0;
+  let raf = 0;
+
+  const $ = id => document.getElementById(id);
+  const lcd = $('lcd'), readout = $('readout'), hrs = $('hrs'), runEl = $('run');
+  const leftBtn = $('left'), rightBtn = $('right');
+
+  const elapsed = (now = performance.now()) => running ? base + (now - t0) : base;
+
+  function fmt(ms) {
+    const cs = Math.floor(ms / 10);
+    const h = Math.floor(cs / 360000);
+    const m = Math.floor(cs / 6000) % 60;
+    const s = Math.floor(cs / 100) % 60;
+    const c = cs % 100;
+    const p = n => String(n).padStart(2, '0');
+    return (h ? h + ':' : '') + p(m) + ':' + p(s) + '.' + p(c);
+  }
+
+  let lastHours = -1;
+  function paint() {
+    const ms = elapsed();
+    const cs = Math.floor(ms / 10);
+    const m = Math.floor(cs / 6000) % 60, s = Math.floor(cs / 100) % 60, c = cs % 100;
+    setDigit(0, Math.floor(m / 10)); setDigit(1, m % 10);
+    setDigit(2, Math.floor(s / 10)); setDigit(3, s % 10);
+    setDigit(4, Math.floor(c / 10)); setDigit(5, c % 10);
+    const h = Math.floor(cs / 360000);
+    if (h !== lastHours) {
+      lastHours = h;
+      hrs.textContent = h ? `${h} h + min : sec . 1/100` : 'min : sec . 1/100';
+    }
+    readout.textContent = fmt(ms);
+  }
+  function loop() { paint(); raf = requestAnimationFrame(loop); }
+
+  function syncUi() {
+    runEl.textContent = running ? 'Running' : (base ? 'Stopped' : 'Ready');
+    runEl.classList.toggle('on', running);
+    rightBtn.textContent = running ? 'Stop' : 'Start';
+    rightBtn.className = 'btn ' + (running ? 'halt' : 'go');
+    leftBtn.textContent = running ? 'Lap' : 'Reset';
+    leftBtn.disabled = !running && base === 0;
+  }
+
+  function start(at) {
+    if (running) return false;
+    t0 = at; running = true;
+    cancelAnimationFrame(raf); loop();
+    syncUi(); return true;
+  }
+  function stop(at) {
+    if (!running) return false;
+    base += at - t0; running = false;
+    if (base < 0) base = 0;
+    cancelAnimationFrame(raf); paint();
+    syncUi(); return true;
+  }
+  function lap(at) {
+    if (!running) return false;
+    const total = elapsed(at);
+    laps.push({ split: total - lastLapTotal, total });
+    lastLapTotal = total;
+    renderLaps(); return true;
+  }
+  function reset() {
+    if (running) return false;
+    base = 0; laps = []; lastLapTotal = 0;
+    renderLaps(); paint(); syncUi(); return true;
+  }
+
+  function renderLaps() {
+    const body = $('lapBody');
+    body.textContent = '';
+    $('lapTable').hidden = !laps.length;
+    $('lapEmpty').hidden = !!laps.length;
+    let fast = -1, slow = -1;
+    if (laps.length >= 3) {
+      fast = 0; slow = 0;
+      laps.forEach((l, i) => {
+        if (l.split < laps[fast].split) fast = i;
+        if (l.split > laps[slow].split) slow = i;
+      });
+    }
+    for (let i = laps.length - 1; i >= 0; i--) {
+      const tr = document.createElement('tr');
+      const a = document.createElement('td'); a.textContent = i + 1;
+      const b = document.createElement('td'); b.textContent = fmt(laps[i].split);
+      if (i === fast || i === slow) {
+        const sm = document.createElement('small');
+        sm.textContent = i === fast ? 'fastest' : 'slowest';
+        b.appendChild(sm);
+      }
+      const c = document.createElement('td'); c.textContent = fmt(laps[i].total);
+      tr.append(a, b, c); body.appendChild(tr);
+    }
+  }
+
+  /* ---------- Buttons ---------- */
+  rightBtn.addEventListener('click', () => {
+    const now = performance.now();
+    unlockAudio();
+    running ? stop(now) : start(now);
+  });
+  leftBtn.addEventListener('click', () => {
+    const now = performance.now();
+    running ? lap(now) : reset();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.target.closest('select, input')) return;
+    if (e.code === 'Space') { e.preventDefault(); rightBtn.click(); }
+    else if (e.key === 'l' || e.key === 'r') { leftBtn.click(); }
+  });
+
+  /* ---------- Settings (per device convenience) ---------- */
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('gfsw.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('gfsw.' + k, JSON.stringify(v)); } catch (e) { /* private mode */ } }
+  };
+  const S = {
+    lang: store.get('lang', 'en-AU'),
+    trigger: store.get('trigger', 'interim'),
+    offset: store.get('offset', 0),
+    beep: store.get('beep', true),
+    wake: store.get('wake', true)
+  };
+  $('lang').value = S.lang; $('trigger').value = S.trigger;
+  $('offset').value = S.offset; $('offOut').textContent = S.offset + ' ms';
+  $('beep').checked = S.beep; $('wake').checked = S.wake;
+
+  $('lang').addEventListener('change', e => { S.lang = e.target.value; store.set('lang', S.lang); if (rec) { rec.lang = S.lang; restartRec(); } });
+  $('trigger').addEventListener('change', e => { S.trigger = e.target.value; store.set('trigger', S.trigger); });
+  $('offset').addEventListener('input', e => { S.offset = +e.target.value; $('offOut').textContent = S.offset + ' ms'; store.set('offset', S.offset); });
+  $('beep').addEventListener('change', e => { S.beep = e.target.checked; store.set('beep', S.beep); });
+  $('wake').addEventListener('change', e => { S.wake = e.target.checked; store.set('wake', S.wake); S.wake && listening ? wakeOn() : wakeOff(); });
+
+  /* ---------- Feedback ---------- */
+  let actx = null;
+  function unlockAudio() {
+    if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) { try { actx = new AC(); } catch (e) { actx = null; } }
+  }
+  function beep(freq, dur = 0.09, when = 0) {
+    if (!S.beep || !actx) return;
+    const t = actx.currentTime + when;
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = freq; o.type = 'square';
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.18, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(actx.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+  function flash() {
+    lcd.classList.remove('flash'); void lcd.offsetWidth; lcd.classList.add('flash');
+  }
+
+  let wakeLock = null;
+  async function wakeOn() {
+    if (!S.wake || !('wakeLock' in navigator) || wakeLock) return;
+    try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+    catch (e) { wakeLock = null; }
+  }
+  function wakeOff() { if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } }
+
+  /* ---------- Voice ---------- */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const mic = $('mic'), micText = $('micText'), heard = $('heard');
+
+  const WORDS = {
+    start: ['start', 'starts', 'started', 'go', 'begin', 'resume'],
+    stop: ['stop', 'stops', 'stopped', 'halt', 'pause', 'freeze'],
+    lap: ['lap', 'laps', 'lab', 'split', 'mark'],
+    reset: ['reset', 'clear', 'zero']
+  };
+  const LOOKUP = {};
+  for (const cmd in WORDS) for (const w of WORDS[cmd]) LOOKUP[w] = cmd;
+
+  function parse(text) {
+    const out = [];
+    for (const w of text.toLowerCase().replace(/[^a-z\s']/g, ' ').split(/\s+/)) {
+      if (LOOKUP[w]) out.push(LOOKUP[w]);
+    }
+    return out;
+  }
+
+  let rec = null, listening = false, fired = new Map(), lastCmd = {}, restarts = [];
+
+  function setMic(state, text) { mic.dataset.state = state; micText.textContent = text; }
+
+  function say(html) { heard.innerHTML = html; }
+  function esc(s) { return s.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch])); }
+
+  function act(cmd, now, text) {
+    if (now - (lastCmd[cmd] || -1e9) < 900) return;   // swallow re-sent duplicates
+    const at = now - S.offset;
+    let ok = false;
+    if (cmd === 'start') ok = start(at);
+    else if (cmd === 'stop') ok = stop(Math.max(at, t0));
+    else if (cmd === 'lap') ok = lap(Math.max(at, t0));
+    else if (cmd === 'reset') ok = reset();
+    lastCmd[cmd] = now;
+    if (ok) {
+      flash();
+      if (cmd === 'start') beep(1320);
+      else if (cmd === 'stop') { beep(880); beep(880, 0.09, 0.13); }
+      else if (cmd === 'lap') beep(1100, 0.06);
+      else beep(660, 0.14);
+      if (!running) paint();
+      say(`Heard <b>${cmd}</b> · “${esc(text.trim())}”`);
+    } else {
+      const why = cmd === 'reset' ? 'stop it first' : (running ? 'already running' : 'not running');
+      say(`Heard <b>${cmd}</b>, ignored: ${why}`);
+    }
+  }
+
+  function handle(e) {
+    const now = performance.now();
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (S.trigger === 'final' && !r.isFinal) continue;
+      const text = r[0].transcript;
+      const cmds = parse(text);
+      const done = fired.get(i) || 0;
+      for (let k = done; k < cmds.length; k++) act(cmds[k], now, text);
+      if (cmds.length > done) fired.set(i, cmds.length);
+      else if (!cmds.length && text.trim()) say(`Heard “${esc(text.trim())}”`);
+    }
+  }
+
+  function makeRec() {
+    rec = new SR();
+    rec.lang = S.lang;
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.onstart = () => { setMic('on', 'Listening'); };
+    rec.onresult = handle;
+    rec.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        listening = false;
+        setMic('err', 'Mic blocked');
+        say('Microphone or speech recognition is blocked. On iPhone: Settings, Safari, Microphone, Allow. Also turn on Siri or Dictation (Settings, General, Keyboard, Enable Dictation). If you opened this from the Home Screen icon, try it in a Safari tab.');
+        wakeOff();
+      } else if (e.error === 'network') {
+        say('Speech service unreachable. Check your connection.');
+      } else if (e.error === 'audio-capture') {
+        say('No microphone input. Another app may be using the mic.');
+      }
+    };
+    rec.onend = () => {
+      fired = new Map();
+      if (!listening) { setMic('off', 'Tap to listen'); return; }
+      const now = Date.now();
+      restarts = restarts.filter(t => now - t < 10000);
+      restarts.push(now);
+      if (restarts.length > 8) {
+        listening = false; setMic('err', 'Voice stopped');
+        say('Recognition keeps dropping out. Tap the mic button to try again.');
+        wakeOff();
+        return;
+      }
+      setMic('wait', 'Reconnecting');
+      setTimeout(() => { if (listening) { try { rec.start(); } catch (err) { /* already started */ } } }, 120);
+    };
+  }
+
+  function restartRec() { if (listening) { try { rec.abort(); } catch (e) { /* ignore */ } } }
+
+  function listen() {
+    if (!SR) return;
+    unlockAudio();
+    if (!rec) makeRec();
+    listening = true; restarts = [];
+    setMic('wait', 'Starting');
+    try { rec.start(); } catch (e) { /* already running */ }
+    wakeOn();
+  }
+  function unlisten() {
+    listening = false;
+    try { rec && rec.stop(); } catch (e) { /* ignore */ }
+    setMic('off', 'Tap to listen');
+    wakeOff();
+  }
+
+  if (!SR) {
+    setMic('err', 'No voice');
+    mic.disabled = true;
+    say('This browser has no speech recognition. On iPhone use Safari, iOS 14.5 or later. The buttons still work.');
+  } else {
+    mic.addEventListener('click', () => listening ? unlisten() : listen());
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      paint();
+      if (listening) { try { rec.start(); } catch (e) { /* still running */ } wakeOn(); }
+    }
+  });
+
+  paint(); syncUi(); renderLaps();
+})();
+</script>
+</body>
+</html>
